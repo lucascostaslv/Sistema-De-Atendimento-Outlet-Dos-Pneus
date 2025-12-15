@@ -310,92 +310,205 @@ function renderPromotions(promotions) {
     ScrollManager.reinit(listContainer);
 }
 
-// --- Gerenciador de Scroll ---
+// --- Gerenciador de Scroll (Versão Blindada para TV) ---
 const ScrollManager = {
     instances: [],
     isPaused: false,
+    watchdogInterval: null,
 
     init(element) {
+        // Evita duplicar instância para o mesmo elemento
+        if (this.instances.some(inst => inst.element === element)) return;
+
         const instance = {
             id: element.id,
             element: element,
             timeoutId: null,
+            animationId: null, // Para cancelar o requestAnimationFrame
             isScrolling: false,
+            lastActivity: Date.now() // Para o Watchdog verificar vida
         };
+
         const isHorizontal = element.classList.contains('horizontal-scroll');
+
+        // Função principal do ciclo
         const startCycle = () => {
-            if (instance.timeoutId) clearTimeout(instance.timeoutId);
+            // Limpa qualquer timer ou animação pendente antes de começar
+            stopInstance(instance);
+
+            if (this.isPaused) {
+                instance.isScrolling = false;
+                return;
+            }
+
+            // Verifica se tem conteúdo suficiente para scrollar
             const scrollLength = isHorizontal ? 
                 element.scrollWidth - element.clientWidth :
                 element.scrollHeight - element.clientHeight;
 
-            if (this.isPaused || scrollLength <= 2) {
+            if (scrollLength <= 2) {
                 instance.isScrolling = false;
+                // Mesmo sem scroll, atualizamos a atividade para o watchdog não achar que travou
+                instance.lastActivity = Date.now();
+                // Tenta verificar novamente em 5 segundos (caso cheguem itens novos)
+                instance.timeoutId = setTimeout(startCycle, 5000);
                 return;
             }
+
             instance.isScrolling = true;
+            instance.lastActivity = Date.now();
             
+            // Define o tempo de espera antes de começar a mover
             const waitTime = element.id === 'ongoing-services-cards' ? ONGOING_SERVICES_SCROLL_WAIT : PROMOTIONS_SCROLL_WAIT;
 
             instance.timeoutId = setTimeout(scrollForward, waitTime); 
         };
+
         const scrollForward = () => {
             if (this.isPaused) return;
+            instance.lastActivity = Date.now();
+
+            // Duração baseada no tamanho do scroll (velocidade constante) ou fixa
+            // TVs preferem durações fixas ou lineares para não engasgar
             const duration = isHorizontal ? 8000 : (element.id === 'promotions-list' ? 3000 : 5000); 
             const target = isHorizontal ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight;
-            this.smoothScroll(element, target, duration, scrollBackward, isHorizontal);
+            
+            smoothScroll(instance, target, duration, scrollBackward, isHorizontal);
         };
+
         const scrollBackward = () => {
             if (this.isPaused) return;
-            setTimeout(() => { // Pausa antes de voltar ao início
-                this.smoothScroll(element, 0, 2500, startCycle, isHorizontal);
-            }, 3000); // Reduzido para 3s
+            instance.lastActivity = Date.now();
+
+            // Pausa no final antes de voltar
+            instance.timeoutId = setTimeout(() => { 
+                // Volta para o topo/início
+                smoothScroll(instance, 0, 2500, startCycle, isHorizontal);
+            }, 3000); 
         };
+
+        // Salva a referência de start para reuso
         instance.start = startCycle;
         this.instances.push(instance);
+        
+        // Inicia o ciclo
         instance.start();
+
+        // Inicia o Cão de Guarda global se ainda não estiver rodando
+        this.startWatchdog();
     },
+
     reinit(element) {
-        const instanceIndex = this.instances.findIndex(inst => inst.element === element);
-        if (instanceIndex > -1) {
-            const instance = this.instances[instanceIndex];
-            if (instance.timeoutId) clearTimeout(instance.timeoutId);
+        const instance = this.instances.find(inst => inst.element === element);
+        if (instance) {
+            stopInstance(instance);
             if (element.classList.contains('horizontal-scroll')) element.scrollLeft = 0;
             else element.scrollTop = 0;
             instance.start();
         }
     },
+
     pauseInstance(element) {
         const instance = this.instances.find(inst => inst.element === element);
-        if (instance && instance.timeoutId) {
-            clearTimeout(instance.timeoutId);
-            instance.isScrolling = false;
-        }
+        if (instance) stopInstance(instance);
     },
-    smoothScroll(el, to, duration, callback, isHorizontal = false) {
-        const start = isHorizontal ? el.scrollLeft : el.scrollTop;
-        const change = to - start;
-        const startTime = performance.now();
-        const animateScroll = (currentTime) => {
-            const elapsed = currentTime - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const newPosition = start + change * (progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress);
-            if (isHorizontal) el.scrollLeft = newPosition;
-            else el.scrollTop = newPosition;
-            if (elapsed < duration) requestAnimationFrame(animateScroll);
-            else callback && callback();
-        };
-        requestAnimationFrame(animateScroll);
-    },
+
     pauseAll() {
         this.isPaused = true;
-        this.instances.forEach(inst => clearTimeout(inst.timeoutId));
+        this.instances.forEach(inst => stopInstance(inst));
     },
+
     resumeAll() {
         this.isPaused = false;
-        this.instances.forEach(inst => { if (inst.isScrolling) inst.start(); });
+        this.instances.forEach(inst => {
+             // Reinicia do zero para evitar estados inconsistentes
+            inst.element.scrollTop = 0;
+            inst.element.scrollLeft = 0;
+            inst.start(); 
+        });
+    },
+
+    // --- CÃO DE GUARDA (WATCHDOG) ---
+    // Verifica a cada 5s se os scrolls estão vivos
+    startWatchdog() {
+        if (this.watchdogInterval) return;
+        
+        console.log("Watchdog de Scroll iniciado.");
+        this.watchdogInterval = setInterval(() => {
+            if (this.isPaused) return; // Se estiver pausado por anúncio, ignora
+
+            const now = Date.now();
+            this.instances.forEach(inst => {
+                // Se passou mais de 15s sem atividade registrada (start, scroll ou wait)
+                // Significa que o navegador matou o setTimeout ou o requestAnimationFrame
+                if (now - inst.lastActivity > 15000) {
+                    console.warn(`Watchdog: Scroll travado detectado em ${inst.id}. Reiniciando...`);
+                    inst.start(); // Força reinício
+                }
+            });
+        }, 5000);
     }
 };
+
+// --- Funções Auxiliares do ScrollManager (Fora do objeto para limpeza) ---
+
+function stopInstance(instance) {
+    if (instance.timeoutId) clearTimeout(instance.timeoutId);
+    if (instance.animationId) cancelAnimationFrame(instance.animationId);
+    instance.isScrolling = false;
+}
+
+function smoothScroll(instance, to, duration, callback, isHorizontal) {
+    const el = instance.element;
+    const start = isHorizontal ? el.scrollLeft : el.scrollTop;
+    const change = to - start;
+    const startTime = performance.now();
+
+    const animateScroll = (currentTime) => {
+        // Se foi pausado no meio da animação, para tudo
+        if (ScrollManager.isPaused) return;
+
+        // Atualiza atividade para o watchdog não matar
+        instance.lastActivity = Date.now();
+
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        
+        // Easing function (suavização)
+        const ease = progress < 0.5 ? 2 * progress * progress : -1 + (4 - 2 * progress) * progress;
+        
+        const newPosition = start + (change * ease);
+
+        if (isHorizontal) el.scrollLeft = newPosition;
+        else el.scrollTop = newPosition;
+
+        if (elapsed < duration) {
+            instance.animationId = requestAnimationFrame(animateScroll);
+        } else {
+            // Garante posição final exata
+            if (isHorizontal) el.scrollLeft = to;
+            else el.scrollTop = to;
+            
+            if (callback) callback();
+        }
+    };
+
+    instance.animationId = requestAnimationFrame(animateScroll);
+}
+
+// --- Listener de Visibilidade (Adicione isso logo após o objeto ScrollManager) ---
+// Isso ajuda quando a TV volta de um "standby" ou troca de HDMI
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+        console.log("Aba visível novamente. Reiniciando scrolls para garantir sincronia.");
+        // Pequeno delay para garantir que o navegador "acordou" totalmente
+        setTimeout(() => {
+            if (!ScrollManager.isPaused) {
+                ScrollManager.resumeAll();
+            }
+        }, 1000);
+    }
+});
 
 // --- API e Anúncios ---
 
