@@ -77,16 +77,6 @@ body {
     gap: 1rem;
 }
 
-/* IMAGEM AO LADO DO TÍTULO "OUTLET" NO CABEÇALHO */
-.header-image-container {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.header-image-container img {
-    height: 65px; /* Altura da imagem */
-}
 .datetime {
     font-size: 1.2rem;
     font-weight: 500;
@@ -324,12 +314,6 @@ body {
 .service-status-text.in-queue { color: var(--danger-red); }
 .service-status-text.completed { color: var(--success-green); }
 
-/* Animação de zoom sutil para a imagem do rodapé */
-@keyframes subtle-zoom {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.2); }
-}
-
 @keyframes anti-sleep-pulse {
   from { opacity: 1; }
   to   { opacity: 0.999; }
@@ -514,25 +498,6 @@ body {
     font-style: italic;
     font-size: 0.8rem;
 }
-
-/* --- IMAGEM NO RODAPÉ DOS CONCLUÍDOS --- */
-.completed-footer-image {
-    margin-top: auto; 
-    padding-top: 0.5rem; 
-    text-align: center;
-    flex-shrink: 0; 
-}
-
-.completed-footer-image img {
-    max-height: 150px; 
-    width: auto; 
-    display: block;
-    margin: 0 auto; 
-    object-fit: contain;
-    transition: opacity 0.3s ease; 
-    animation: subtle-zoom 5s ease-in-out infinite; 
-}
-
 
 /* --- Anúncios e Utilitários (Otimizado) --- */
 
